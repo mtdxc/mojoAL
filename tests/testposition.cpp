@@ -54,9 +54,29 @@ struct obj
     ALuint sid = 0;
     ALuint bid = 0;
     char fname[20] = { 0 };
+    void setPos(int x, int y);
     int x = 400;
     int y = 50;
 };
+
+void obj::setPos(int nx, int ny)
+{
+    if (x == nx && y == ny)
+        return;
+    this->x = SDL_min(800, SDL_max(0, nx));
+    this->y = SDL_min(600, SDL_max(0, ny));
+    /* we are treating the 2D view as the X and Z coordinate, as if we're looking at it from above.
+       From this configuration, the Y coordinate would be depth, and we leave that at zero.
+       the listener's default "at" orientation is towards the north in this configuration, with its
+       "up" pointing at the camera. Since we are rendering the audio in relation to a listener we
+       move around in 2D space in the camera's view, it's obviously detached from the camera itself. */
+    if (sid == 0) {  /* it's the listener. */
+        alListener3f(AL_POSITION, ((x / 400.0f) - 1.0f) * 10.0f, 0.0f, ((y / 300.0f) - 1.0f) * 10.0f);
+    }
+    else {
+        alSource3f(sid, AL_POSITION, ((x / 400.0f) - 1.0f) * 10.0f, 0.0f, ((y / 300.0f) - 1.0f) * 10.0f);
+    }
+}
 
 /* !!! FIXME: eventually, add more sources and sounds. */
 static std::vector<obj> objects;  /* one listener, one source. */
@@ -101,8 +121,24 @@ static int mainloop(SDL_Renderer *renderer)
                         objects.erase(objects.begin() + selobj);
                     }
                     break;
+                case SDLK_UP:
+                    if (selobj != -1) 
+                        objects[selobj].setPos(objects[selobj].x, objects[selobj].y - 10);
+                    break;
+                case SDLK_DOWN:
+                    if (selobj != -1)
+                        objects[selobj].setPos(objects[selobj].x, objects[selobj].y + 10);
+                    break;
+                case SDLK_LEFT:
+                    if (selobj != -1)
+                        objects[selobj].setPos(objects[selobj].x - 10, objects[selobj].y);
+                    break;
+                case SDLK_RIGHT:
+                    if (selobj != -1)
+                        objects[selobj].setPos(objects[selobj].x + 10, objects[selobj].y);
+                    break;
                 default:
-                    printf("user press %c\n", e.key.keysym.sym);
+                    printf("user press %d\n", e.key.keysym.sym);
                     break;
                 }
                 break;
@@ -160,19 +196,7 @@ static int mainloop(SDL_Renderer *renderer)
 
             case SDL_MOUSEMOTION:
                 if (draging) {
-                    obj *o = &objects[selobj];
-                    o->x = SDL_min(800, SDL_max(0, e.motion.x));
-                    o->y = SDL_min(600, SDL_max(0, e.motion.y));
-                    /* we are treating the 2D view as the X and Z coordinate, as if we're looking at it from above.
-                       From this configuration, the Y coordinate would be depth, and we leave that at zero.
-                       the listener's default "at" orientation is towards the north in this configuration, with its
-                       "up" pointing at the camera. Since we are rendering the audio in relation to a listener we
-                       move around in 2D space in the camera's view, it's obviously detached from the camera itself. */
-                    if (o->sid == 0) {  /* it's the listener. */
-                        alListener3f(AL_POSITION, ((o->x / 400.0f) - 1.0f) * 10.0f, 0.0f, ((o->y / 300.0f) - 1.0f) * 10.0f);
-                    } else {
-                        alSource3f(o->sid, AL_POSITION, ((o->x / 400.0f) - 1.0f) * 10.0f, 0.0f, ((o->y / 300.0f) - 1.0f) * 10.0f);
-                    }
+                    objects[selobj].setPos(e.motion.x, e.motion.y);
                 }
                 break;
         }
