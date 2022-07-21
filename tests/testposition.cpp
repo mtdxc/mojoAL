@@ -14,13 +14,13 @@
 #include "AL/alc.h"
 #include "SDL.h"
 #include <vector>
+#include <map>
+#include <string>
 #include <Windows.h>
 //#pragma comment(lib, "OpenAL32.lib")
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
 #endif
-bool setfile(int idx, const char* fname);
-bool addfile(const char* fname);
 static int check_openal_error(const char *where)
 {
     const ALenum err = alGetError();
@@ -49,15 +49,68 @@ static ALenum get_openal_format(const SDL_AudioSpec *spec)
     return AL_NONE;
 }
 
+std::map<std::string, ALuint> buferMap;
+ALuint loadwav(const char* fname) {
+    if (buferMap.count(fname))
+        return buferMap[fname];
+
+    ALuint bid = 0;
+    alGenBuffers(1, &bid);
+    if (check_openal_error("alGenSources")) {
+        return 0;
+    }
+
+    SDL_AudioSpec spec;
+    ALenum alfmt = AL_NONE;
+    Uint8* buf = NULL;
+    Uint32 buflen = 0;
+
+    if (!SDL_LoadWAV(fname, &spec, &buf, &buflen)) {
+        printf("Loading '%s' failed! %s\n", fname, SDL_GetError());
+        alDeleteBuffers(1, &bid);
+        return 0;
+    }
+    else if ((alfmt = get_openal_format(&spec)) == AL_NONE) {
+        printf("Can't queue '%s', format not supported by the AL.\n", fname);
+        SDL_FreeWAV(buf);
+        return 0;
+    }
+    check_openal_error("loadwav");
+    alBufferData(bid, alfmt, buf, buflen, spec.freq);
+    check_openal_error("alBufferData");
+    SDL_FreeWAV(buf);
+
+    printf("loadwav %d:%s...\n", bid, fname);
+    buferMap[fname] = bid;
+    return true;
+}
+
 struct obj
 {
     ALuint sid = 0;
     ALuint bid = 0;
-    char fname[20] = { 0 };
-    void setPos(int x, int y);
     int x = 400;
     int y = 50;
+    void setPos(int x, int y);
+    void playBid(ALuint bid);
 };
+
+void obj::playBid(ALuint bid)
+{
+    if (!sid) return;
+    if(this->bid)
+        alSourceStop(sid);
+    alSourcei(sid, AL_BUFFER, bid);
+    check_openal_error("alSourcei");
+    alSourcei(sid, AL_LOOPING, AL_TRUE);
+    check_openal_error("alSourcei");
+    alSourcePlay(sid);
+    check_openal_error("alSourcePlay");
+    alSource3f(sid, AL_POSITION, ((x / 400.0f) - 1.0f) * 10.0f, 0.0f, ((y / 300.0f) - 1.0f) * 10.0f);
+
+    printf("sid %d play bid %d\n", sid, bid);
+    this->bid = bid;
+}
 
 void obj::setPos(int nx, int ny)
 {
@@ -112,13 +165,14 @@ static int mainloop(SDL_Renderer *renderer)
                 case SDLK_ESCAPE:
                     return 0;
                 case SDLK_BACKSPACE:
+                case SDLK_DELETE:
                     if (selobj > 0) {
                         obj o = objects[selobj];
+                        printf("del source %d, %d remain\n", o.sid, objects.size()-2);
                         alDeleteSources(1, &o.sid);
                         check_openal_error("alDeleteSources");
-                        alDeleteBuffers(1, &o.bid);
-                        check_openal_error("alDeleteBuffers");
                         objects.erase(objects.begin() + selobj);
+                        selobj = -1;
                     }
                     break;
                 case SDLK_UP:
@@ -137,6 +191,18 @@ static int mainloop(SDL_Renderer *renderer)
                     if (selobj != -1)
                         objects[selobj].setPos(objects[selobj].x + 10, objects[selobj].y);
                     break;
+                case SDLK_F2:
+                    if (selobj > 0) { // clone new item
+                        obj o;
+                        ALuint bid = objects[selobj].bid;
+                        o.x = objects[selobj].x;
+                        o.y = objects[selobj].y;
+                        alGenSources(1, &o.sid);
+                        check_openal_error("alGenSources");
+                        o.playBid(bid);
+                        objects.push_back(o);
+                    }
+                    break;
                 default:
                     printf("user press %d\n", e.key.keysym.sym);
                     break;
@@ -154,13 +220,15 @@ static int mainloop(SDL_Renderer *renderer)
                     } else {
                         //if (palTraceMessage) palTraceMessage("Mouse button pressed");
                         selobj = obj_under_mouse(e.button.x, e.button.y);
-                        draging = selobj != -1;
+                        draging = (selobj != -1);
                     }
                     break;
                 }
+
                 if (e.button.button == SDL_BUTTON_RIGHT && e.type == SDL_MOUSEBUTTONDOWN) {
                     selobj = obj_under_mouse(e.button.x, e.button.y);
                     if (selobj == -1) break;
+
                     OPENFILENAMEA ofn;       // common dialog box structure
                     char szFile[260];       // buffer for file name
                     HWND hwnd;              // owner window
@@ -183,19 +251,27 @@ static int mainloop(SDL_Renderer *renderer)
                     ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
 
                     // Display the Open dialog box. 
-
                     if (GetOpenFileNameA(&ofn) == TRUE) {
                         //::MessageBoxA(NULL, szFile, "select file", MB_OK);
-                        if (selobj)
-                            setfile(selobj, szFile);
-                        else
-                            addfile(szFile);
+                        ALuint bid = loadwav(szFile);
+                        if (!bid) break;
+
+                        if (selobj) {
+                            objects[selobj].playBid(bid);
+                        }
+                        else {
+                            obj o;
+                            alGenSources(1, &o.sid);
+                            check_openal_error("alGenSources");
+                            o.playBid(bid);
+                            objects.push_back(o);
+                        }
                     }
                 }
                 break;
 
             case SDL_MOUSEMOTION:
-                if (draging) {
+                if (draging && selobj >=0) {
                     objects[selobj].setPos(e.motion.x, e.motion.y);
                 }
                 break;
@@ -234,82 +310,8 @@ static void emscriptenMainloop(void *arg)
 }
 #endif
 
-bool loadwav(ALuint bid, const char* fname) {
-    SDL_AudioSpec spec;
-    ALenum alfmt = AL_NONE;
-    Uint8* buf = NULL;
-    Uint32 buflen = 0;
-
-    if (!SDL_LoadWAV(fname, &spec, &buf, &buflen)) {
-        printf("Loading '%s' failed! %s\n", fname, SDL_GetError());
-        return false;
-    }
-    else if ((alfmt = get_openal_format(&spec)) == AL_NONE) {
-        printf("Can't queue '%s', format not supported by the AL.\n", fname);
-        SDL_FreeWAV(buf);
-        return false;
-    }
-    check_openal_error("loadwav");
-    alBufferData(bid, alfmt, buf, buflen, spec.freq);
-    SDL_FreeWAV(buf);
-    check_openal_error("alBufferData");
-    return true;
-}
-
-bool setfile(int idx, const char* fname) {
-    obj& o = objects[idx];
-    if (o.bid) {
-        alSourceStop(o.sid);
-    }
-
-    if (!loadwav(o.bid, fname))
-        return false;
-    // set filename
-    const char* p = strrchr(fname, '/');
-    if (!p) {
-        p = strrchr(fname, '\\');
-    }
-    if (p) strncpy_s(o.fname, p + 1, sizeof(o.fname));
-
-    alSourcei(o.sid, AL_BUFFER, o.bid);
-    check_openal_error("alSourcei");
-    alSourcei(o.sid, AL_LOOPING, AL_TRUE);
-    check_openal_error("alSourcei");
-    alSourcePlay(o.sid);
-    check_openal_error("alSourcePlay");
-
-    alSource3f(o.sid, AL_POSITION, ((o.x / 400.0f) - 1.0f) * 10.0f, 0.0f, ((o.y / 300.0f) - 1.0f) * 10.0f);
-    return true;
-}
-
-static bool addfile(const char* fname) {
-    obj o;
-    printf("Now queueing '%s'...\n", fname);
-    alGenSources(1, &o.sid);
-    if (check_openal_error("alGenSources")) {
-        return false;
-    }
-
-    alGenBuffers(1, &o.bid);
-    if (check_openal_error("alGenBuffers")) {
-        alDeleteSources(1, &o.sid);
-        check_openal_error("alDeleteSources");
-        return false;
-    }
-    int idx = objects.size();
-    objects.push_back(o);
-    if (!setfile(idx, fname)) {
-        alDeleteSources(1, &o.sid);
-        check_openal_error("alDeleteSources");
-        objects.pop_back();
-        return false;
-    }
-    return true;
-}
-
 static void spatialize(SDL_Renderer *renderer)
 {
-
     //if (palTracePopScope) palTracePopScope();
 
     #ifdef __EMSCRIPTEN__
@@ -322,10 +324,15 @@ static void spatialize(SDL_Renderer *renderer)
         //alSourcei(sid, AL_BUFFER, 0);  /* force unqueueing */
         alDeleteSources(1, &o.sid);
         check_openal_error("alDeleteSources");
-        alDeleteBuffers(1, &o.bid);
-        check_openal_error("alDeleteBuffers");
     }
     objects.clear();
+
+    for (auto it : buferMap)
+    {
+        alDeleteBuffers(1, &it.second);
+        check_openal_error("alDeleteBuffers");
+    }
+    buferMap.clear();
 }
 
 #undef main
@@ -335,12 +342,7 @@ int main(int argc, char **argv)
     ALCcontext *context;
     SDL_Window *window;
     SDL_Renderer *renderer;
-/*
-    if (argc != 2) {
-        fprintf(stderr, "USAGE: %s [wavfile]\n", argv[0]);
-        return 1;
-    }
-*/
+
     if (SDL_Init(SDL_INIT_VIDEO) == -1) {
         fprintf(stderr, "SDL_Init(SDL_INIT_VIDEO) failed: %s\n", SDL_GetError());
         return 2;
@@ -389,15 +391,22 @@ int main(int argc, char **argv)
 
     alcMakeContextCurrent(context);
 
+    /* add listener. */
     obj o;
-    /* the listener. */
     o.sid = 0;
     o.x = 400;
     o.y = 300;
     alListener3f(AL_POSITION, ((o.x / 400.0f) - 1.0f) * 10.0f, 0.0f, ((o.y / 300.0f) - 1.0f) * 10.0f);
     objects.push_back(o);
+
     for (size_t i = 1; i < argc; i++) {
-        addfile(argv[i]);
+        ALuint bid = loadwav(argv[i]);
+        if (!bid) continue;
+        obj o;
+        alGenSources(1, &o.sid);
+        check_openal_error("alGenSources");
+        o.playBid(bid);
+        objects.push_back(o);
     }
 
     spatialize(renderer);
