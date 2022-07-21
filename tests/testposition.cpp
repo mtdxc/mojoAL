@@ -82,7 +82,7 @@ ALuint loadwav(const char* fname) {
 
     printf("loadwav %d:%s...\n", bid, fname);
     buferMap[fname] = bid;
-    return true;
+    return bid;
 }
 
 struct obj
@@ -195,11 +195,12 @@ static int mainloop(SDL_Renderer *renderer)
                     if (selobj > 0) { // clone new item
                         obj o;
                         ALuint bid = objects[selobj].bid;
-                        o.x = objects[selobj].x;
-                        o.y = objects[selobj].y;
+                        o.x = objects[selobj].x + 10;
+                        o.y = objects[selobj].y + 10;
                         alGenSources(1, &o.sid);
                         check_openal_error("alGenSources");
                         o.playBid(bid);
+                        selobj = objects.size();
                         objects.push_back(o);
                     }
                     break;
@@ -406,6 +407,7 @@ int main(int argc, char **argv)
         alGenSources(1, &o.sid);
         check_openal_error("alGenSources");
         o.playBid(bid);
+        o.x = i * 55;
         objects.push_back(o);
     }
 
