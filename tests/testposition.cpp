@@ -158,7 +158,20 @@ static int mainloop(SDL_Renderer *renderer)
         switch (e.type) {
             case SDL_QUIT:
                 return 0;
-
+            case SDL_DROPFILE:
+                if(e.drop.file)
+                {
+                    ALuint bid = loadwav(e.drop.file);
+                    if (bid) {
+                        obj o;
+                        alGenSources(1, &o.sid);
+                        check_openal_error("alGenSources");
+                        o.playBid(bid);
+                        objects.push_back(o);
+                    }
+                    SDL_free(e.drop.file);
+                }
+                break;
             case SDL_KEYDOWN:
                 switch (e.key.keysym.sym)
                 {
